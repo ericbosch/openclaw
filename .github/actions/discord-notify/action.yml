@@ -43,8 +43,8 @@ runs:
           TIMESTAMP="\"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
         fi
         
-        # Escape description for JSON
-        DESCRIPTION=$(echo '${{ inputs.description }}' | jq -Rs .)
+        # Escape description for JSON (use double quotes for variable expansion)
+        DESCRIPTION=$(echo "${{ inputs.description }}" | jq -Rs .)
         
         PAYLOAD=$(cat <<EOF
         {

@@ -121,10 +121,10 @@ jobs:
           CHANGELOG="${CHANGELOG}**Release Type**: ${RELEASE_TYPE}\n"
           CHANGELOG="${CHANGELOG}**Full Changelog**: https://github.com/${{ github.repository }}/compare/${LATEST_TAG:-initial}...v${VERSION}\n"
           
-          # Escape for multiline output
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          # Escape for multiline output (use unique delimiter to avoid collision with commit messages)
+          echo "changelog<<__CHANGELOG_HEREDOC_DELIMITER__" >> $GITHUB_OUTPUT
           echo -e "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "__CHANGELOG_HEREDOC_DELIMITER__" >> $GITHUB_OUTPUT
           echo "changelog_file=CHANGELOG.md" >> $GITHUB_OUTPUT
           
           # Also write to step summary

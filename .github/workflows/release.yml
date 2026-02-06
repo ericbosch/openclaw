@@ -47,6 +47,5 @@ jobs:
     with:
       release_type: ${{ inputs.release_type }}
       source_branch: ${{ needs.determine-branch.outputs.branch }}
-      should_bump_version: true
       dry_run: ${{ inputs.dry_run }}
     secrets: inherit

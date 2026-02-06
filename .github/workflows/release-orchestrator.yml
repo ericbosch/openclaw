@@ -108,6 +108,7 @@ jobs:
   changelog:
     name: Changelog
     needs: [get-commits, version]
+    if: needs.get-commits.outputs.has_changes == 'true'
     uses: ./.github/workflows/generate-changelog.yml
     with:
       version: ${{ needs.version.outputs.new_version }}
@@ -117,7 +118,8 @@ jobs:
   # Run full test suite for the release type
   test:
     name: Test
-    needs: version
+    needs: [get-commits, version]
+    if: needs.get-commits.outputs.has_changes == 'true'
     uses: ./.github/workflows/testing-strategy.yml
     with:
       test_stage: ${{ inputs.release_type == 'stable' && 'stable' || inputs.release_type }}
