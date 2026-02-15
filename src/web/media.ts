@@ -31,7 +31,7 @@ type WebMediaOptions = {
   readFile?: (filePath: string) => Promise<Buffer>;
 };
 
-function getDefaultLocalRoots(): string[] {
+export function getDefaultLocalRoots(): string[] {
   const home = os.homedir();
   return [
     os.tmpdir(),
