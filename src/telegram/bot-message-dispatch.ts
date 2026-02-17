@@ -1,5 +1,5 @@
 import type { Bot } from "grammy";
-import { resolveAgentDir } from "../agents/agent-scope.js";
+import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import {
   findModelInCatalog,
   loadModelCatalog,
@@ -11,6 +11,7 @@ import { resolveChunkMode } from "../auto-reply/chunk.js";
 import { clearHistoryEntriesIfEnabled } from "../auto-reply/reply/history.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/provider-dispatcher.js";
 import { removeAckReactionAfterReply } from "../channels/ack-reactions.js";
+import { readAckStylePhrase } from "../channels/ack-style.js";
 import { logAckFailure, logTypingFailure } from "../channels/logging.js";
 import { createReplyPrefixOptions } from "../channels/reply-prefix.js";
 import { createTypingCallbacks } from "../channels/typing.js";
@@ -22,6 +23,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import type { TelegramMessageContext } from "./bot-message-context.js";
 import type { TelegramBotOptions } from "./bot.js";
 import { deliverReplies } from "./bot/delivery.js";
+import { buildTelegramThreadParams } from "./bot/helpers.js";
 import type { TelegramStreamMode } from "./bot/types.js";
 import type { TelegramInlineButtons } from "./button-types.js";
 import { resolveTelegramDraftStreamingChunking } from "./draft-chunking.js";
@@ -88,6 +90,18 @@ export const dispatchTelegramMessage = async ({
     reactionApi,
     removeAckAfterReply,
   } = context;
+
+  // Send short ACK text from workspace ACK_STYLE.json (generic, no LLM)
+  const workspaceDir = resolveAgentWorkspaceDir(cfg, route.agentId);
+  const ackPhrase = await readAckStylePhrase(workspaceDir);
+  if (ackPhrase) {
+    const threadParams = buildTelegramThreadParams(threadSpec);
+    try {
+      await bot.api.sendMessage(chatId, ackPhrase, threadParams);
+    } catch (err) {
+      logVerbose(`telegram ack-style send failed: ${String(err)}`);
+    }
+  }
 
   const draftMaxChars = Math.min(textLimit, 4096);
   const accountBlockStreamingEnabled =
