@@ -1287,6 +1287,42 @@ describe("runReplyAgent typing (heartbeat)", () => {
     });
   });
 
+  it("returns friendly all-models-failed fallback with error code", async () => {
+    state.runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
+      throw new Error(
+        "All models failed (1): anthropic/claude: rate limited (rate_limit), retry-after 90s",
+      );
+    });
+
+    const { run } = createMinimalRun({});
+    const res = await run();
+
+    expect(res).toMatchObject({
+      text: expect.stringContaining("No he podido responder ahora."),
+    });
+    expect(res).toMatchObject({
+      text: expect.stringContaining("Reintenta en 1m 30s."),
+    });
+    expect(res).toMatchObject({
+      text: expect.stringContaining("[OC-E-MODELS-RATELIMIT]"),
+    });
+  });
+
+  it("returns friendly timeout fallback with timeout code", async () => {
+    state.runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
+      throw new Error("request was aborted");
+    });
+
+    const { run } = createMinimalRun({});
+    const res = await run();
+
+    expect(res).toMatchObject({
+      text: expect.stringContaining("No he podido responder ahora."),
+    });
+    expect(res).toMatchObject({
+      text: expect.stringContaining("[OC-E-TIMEOUT]"),
+    });
+  });
   it("returns friendly message for role ordering errors thrown as exceptions", async () => {
     state.runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
       throw new Error("400 Incorrect role information");
