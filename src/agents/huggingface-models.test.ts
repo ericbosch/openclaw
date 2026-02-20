@@ -4,6 +4,7 @@ import {
   HUGGINGFACE_MODEL_CATALOG,
   buildHuggingfaceModelDefinition,
   isHuggingfacePolicyLocked,
+  isHuggingfaceDiscoveryEnabled,
 } from "./huggingface-models.js";
 
 describe("huggingface-models", () => {
@@ -39,6 +40,24 @@ describe("huggingface-models", () => {
     it("returns false for base ref and :provider refs", () => {
       expect(isHuggingfacePolicyLocked("huggingface/deepseek-ai/DeepSeek-R1")).toBe(false);
       expect(isHuggingfacePolicyLocked("huggingface/foo:together")).toBe(false);
+    });
+  });
+
+  describe("isHuggingfaceDiscoveryEnabled", () => {
+    it("defaults to enabled when OPENCLAW_HF_DISCOVERY is unset", () => {
+      expect(isHuggingfaceDiscoveryEnabled({})).toBe(true);
+    });
+
+    it("disables discovery for false-like env values", () => {
+      expect(isHuggingfaceDiscoveryEnabled({ OPENCLAW_HF_DISCOVERY: "0" })).toBe(false);
+      expect(isHuggingfaceDiscoveryEnabled({ OPENCLAW_HF_DISCOVERY: "false" })).toBe(false);
+      expect(isHuggingfaceDiscoveryEnabled({ OPENCLAW_HF_DISCOVERY: "off" })).toBe(false);
+      expect(isHuggingfaceDiscoveryEnabled({ OPENCLAW_HF_DISCOVERY: "no" })).toBe(false);
+    });
+
+    it("keeps discovery enabled for truthy values", () => {
+      expect(isHuggingfaceDiscoveryEnabled({ OPENCLAW_HF_DISCOVERY: "1" })).toBe(true);
+      expect(isHuggingfaceDiscoveryEnabled({ OPENCLAW_HF_DISCOVERY: "true" })).toBe(true);
     });
   });
 });

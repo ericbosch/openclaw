@@ -9,7 +9,9 @@ import {
   resolveDefaultAgentId,
   resolveAgentWorkspaceDir,
   resolveAgentDir,
+  resolveAgentModelPrimary,
 } from "../agents/agent-scope.js";
+import { parseModelRef } from "../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import type { OpenClawConfig } from "../config/config.js";
 
@@ -38,7 +40,13 @@ ${params.sessionContent.slice(0, 2000)}
 
 Reply with ONLY the slug, nothing else. Examples: "vendor-pitch", "api-design", "bug-fix"`;
 
-    const result = await runEmbeddedPiAgent({
+    const primaryRef =
+      resolveAgentModelPrimary(params.cfg, agentId) ?? params.cfg?.agents?.defaults?.model?.primary;
+    const parsed =
+      primaryRef && typeof primaryRef === "string"
+        ? parseModelRef(primaryRef.trim(), "anthropic")
+        : null;
+    const runParams: Parameters<typeof runEmbeddedPiAgent>[0] = {
       sessionId: `slug-generator-${Date.now()}`,
       sessionKey: "temp:slug-generator",
       agentId,
@@ -49,7 +57,12 @@ Reply with ONLY the slug, nothing else. Examples: "vendor-pitch", "api-design", 
       prompt,
       timeoutMs: 15_000, // 15 second timeout
       runId: `slug-gen-${Date.now()}`,
-    });
+    };
+    if (parsed) {
+      runParams.provider = parsed.provider;
+      runParams.model = parsed.model;
+    }
+    const result = await runEmbeddedPiAgent(runParams);
 
     // Extract text from payloads
     if (result.payloads && result.payloads.length > 0) {

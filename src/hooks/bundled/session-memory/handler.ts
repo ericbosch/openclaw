@@ -20,6 +20,30 @@ import { generateSlugViaLLM } from "../../llm-slug-generator.js";
 
 const log = createSubsystemLogger("hooks/session-memory");
 
+export function resolveSessionMemoryOptions(rawHookConfig: unknown): {
+  messageCount: number;
+  allowLlmSlug: boolean;
+  usedDeprecatedNestedHookConfig: boolean;
+} {
+  const hookConfig = (rawHookConfig ?? {}) as {
+    messages?: unknown;
+    llmSlug?: unknown;
+    hookConfig?: unknown;
+  };
+  const messageCount =
+    typeof hookConfig.messages === "number" && hookConfig.messages > 0 ? hookConfig.messages : 15;
+  const nestedLlmSlug =
+    hookConfig.hookConfig &&
+    typeof hookConfig.hookConfig === "object" &&
+    "llmSlug" in hookConfig.hookConfig
+      ? (hookConfig.hookConfig as { llmSlug?: unknown }).llmSlug
+      : undefined;
+  const usedDeprecatedNestedHookConfig = nestedLlmSlug !== undefined;
+  const llmSlugOpt = hookConfig.llmSlug ?? nestedLlmSlug;
+  const allowLlmSlug = llmSlugOpt !== false;
+  return { messageCount, allowLlmSlug, usedDeprecatedNestedHookConfig };
+}
+
 /**
  * Read recent messages from session file for slug generation
  */
@@ -233,10 +257,13 @@ const saveSessionToMemory: HookHandler = async (event) => {
 
     // Read message count from hook config (default: 15)
     const hookConfig = resolveHookConfig(cfg, "session-memory");
-    const messageCount =
-      typeof hookConfig?.messages === "number" && hookConfig.messages > 0
-        ? hookConfig.messages
-        : 15;
+    const options = resolveSessionMemoryOptions(hookConfig);
+    const messageCount = options.messageCount;
+    if (options.usedDeprecatedNestedHookConfig) {
+      log.warn(
+        "session-memory: hooks.internal.entries.session-memory.hookConfig.llmSlug is deprecated; use hooks.internal.entries.session-memory.llmSlug",
+      );
+    }
 
     let slug: string | null = null;
     let sessionContent: string | null = null;
@@ -255,7 +282,7 @@ const saveSessionToMemory: HookHandler = async (event) => {
         process.env.VITEST === "true" ||
         process.env.VITEST === "1" ||
         process.env.NODE_ENV === "test";
-      const allowLlmSlug = !isTestEnv && hookConfig?.llmSlug !== false;
+      const allowLlmSlug = !isTestEnv && options.allowLlmSlug;
 
       if (sessionContent && cfg && allowLlmSlug) {
         log.debug("Calling generateSlugViaLLM...");

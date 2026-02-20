@@ -6,15 +6,31 @@ import { makeTempWorkspace, writeWorkspaceFile } from "../../../test-helpers/wor
 import type { HookHandler } from "../../hooks.js";
 import { createHookEvent } from "../../hooks.js";
 
+const loggerWarnMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../logging/subsystem.js", () => ({
+  createSubsystemLogger: vi.fn().mockReturnValue({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: loggerWarnMock,
+    error: vi.fn(),
+  }),
+}));
+
 // Avoid calling the embedded Pi agent (global command lane); keep this unit test deterministic.
 vi.mock("../../llm-slug-generator.js", () => ({
   generateSlugViaLLM: vi.fn().mockResolvedValue("simple-math"),
 }));
 
 let handler: HookHandler;
+let resolveSessionMemoryOptions: (rawHookConfig: unknown) => {
+  messageCount: number;
+  allowLlmSlug: boolean;
+  usedDeprecatedNestedHookConfig: boolean;
+};
 
 beforeAll(async () => {
-  ({ default: handler } = await import("./handler.js"));
+  ({ default: handler, resolveSessionMemoryOptions } = await import("./handler.js"));
 });
 
 /**
@@ -112,6 +128,29 @@ function makeSessionMemoryConfig(tempDir: string, messages?: number): OpenClawCo
 }
 
 describe("session-memory hook", () => {
+  it("parses llmSlug options with flat key precedence over deprecated nested key", () => {
+    const opts = resolveSessionMemoryOptions({
+      messages: 20,
+      llmSlug: false,
+      hookConfig: { llmSlug: true },
+    });
+
+    expect(opts.messageCount).toBe(20);
+    expect(opts.allowLlmSlug).toBe(false);
+    expect(opts.usedDeprecatedNestedHookConfig).toBe(true);
+  });
+
+  it("disables deprecated nested warning flag when nested llmSlug is absent", () => {
+    const opts = resolveSessionMemoryOptions({
+      messages: 10,
+      llmSlug: true,
+    });
+
+    expect(opts.messageCount).toBe(10);
+    expect(opts.allowLlmSlug).toBe(true);
+    expect(opts.usedDeprecatedNestedHookConfig).toBe(false);
+  });
+
   it("skips non-command events", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
 
@@ -156,6 +195,59 @@ describe("session-memory hook", () => {
     expect(memoryContent).toContain("assistant: Hi! How can I help?");
     expect(memoryContent).toContain("user: What is 2+2?");
     expect(memoryContent).toContain("assistant: 2+2 equals 4");
+  });
+
+  it("uses timestamp slug when llmSlug is false (flat config)", async () => {
+    const sessionContent = createMockSessionContent([
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi" },
+    ]);
+    const { files } = await runNewWithPreviousSession({
+      sessionContent,
+      cfg: (tempDir) =>
+        ({
+          agents: { defaults: { workspace: tempDir } },
+          hooks: {
+            internal: {
+              entries: {
+                "session-memory": { enabled: true, llmSlug: false },
+              },
+            },
+          },
+        }) satisfies OpenClawConfig,
+    });
+    expect(files.length).toBe(1);
+    expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}-\d{4}\.md$/);
+  });
+
+  it("supports deprecated nested hookConfig.llmSlug and emits warning", async () => {
+    loggerWarnMock.mockReset();
+    const sessionContent = createMockSessionContent([
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi" },
+    ]);
+    const { files } = await runNewWithPreviousSession({
+      sessionContent,
+      cfg: (tempDir) =>
+        ({
+          agents: { defaults: { workspace: tempDir } },
+          hooks: {
+            internal: {
+              entries: {
+                "session-memory": {
+                  enabled: true,
+                  hookConfig: { llmSlug: false },
+                },
+              },
+            },
+          },
+        }) satisfies OpenClawConfig,
+    });
+    expect(files.length).toBe(1);
+    expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}-\d{4}\.md$/);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("hookConfig.llmSlug is deprecated"),
+    );
   });
 
   it("filters out non-message entries (tool calls, system)", async () => {
