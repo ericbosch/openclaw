@@ -62,6 +62,7 @@ The hook supports optional configuration:
 | Option     | Type   | Default | Description                                                     |
 | ---------- | ------ | ------- | --------------------------------------------------------------- |
 | `messages` | number | 15      | Number of user/assistant messages to include in the memory file |
+| `llmSlug`  | bool   | true    | Enable LLM-based slug generation (`false` uses timestamp slug)  |
 
 Example configuration:
 
@@ -72,7 +73,27 @@ Example configuration:
       "entries": {
         "session-memory": {
           "enabled": true,
-          "messages": 25
+          "messages": 25,
+          "llmSlug": false
+        }
+      }
+    }
+  }
+}
+```
+
+Deprecated (still supported for compatibility, emits warning):
+
+```json
+{
+  "hooks": {
+    "internal": {
+      "entries": {
+        "session-memory": {
+          "enabled": true,
+          "hookConfig": {
+            "llmSlug": false
+          }
         }
       }
     }
