@@ -26,6 +26,7 @@ const HUGGINGFACE_DEFAULT_COST = {
 /** Defaults for models discovered from GET /v1/models. */
 const HUGGINGFACE_DEFAULT_CONTEXT_WINDOW = 131072;
 const HUGGINGFACE_DEFAULT_MAX_TOKENS = 8192;
+const HUGGINGFACE_DISCOVERY_DISABLED_VALUES = new Set(["0", "false", "off", "no"]);
 
 /**
  * Shape of a single model entry from GET https://router.huggingface.co/v1/models.
@@ -62,6 +63,14 @@ interface HFModelEntry {
 interface OpenAIListModelsResponse {
   object?: string;
   data?: HFModelEntry[];
+}
+
+export function isHuggingfaceDiscoveryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.OPENCLAW_HF_DISCOVERY?.trim().toLowerCase();
+  if (!raw) {
+    return true;
+  }
+  return !HUGGINGFACE_DISCOVERY_DISABLED_VALUES.has(raw);
 }
 
 export const HUGGINGFACE_MODEL_CATALOG: ModelDefinitionConfig[] = [
@@ -148,6 +157,10 @@ function displayNameFromApiEntry(entry: HFModelEntry, inferredName: string): str
  * Requires a valid HF token. Falls back to static catalog on failure or in test env.
  */
 export async function discoverHuggingfaceModels(apiKey: string): Promise<ModelDefinitionConfig[]> {
+  if (!isHuggingfaceDiscoveryEnabled()) {
+    return HUGGINGFACE_MODEL_CATALOG.map(buildHuggingfaceModelDefinition);
+  }
+
   if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
     return HUGGINGFACE_MODEL_CATALOG.map(buildHuggingfaceModelDefinition);
   }
