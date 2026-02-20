@@ -20,7 +20,7 @@ import { generateSlugViaLLM } from "../../llm-slug-generator.js";
 
 const log = createSubsystemLogger("hooks/session-memory");
 
-function resolveSessionMemoryOptions(rawHookConfig: unknown): {
+export function resolveSessionMemoryOptions(rawHookConfig: unknown): {
   messageCount: number;
   allowLlmSlug: boolean;
   usedDeprecatedNestedHookConfig: boolean;

@@ -23,9 +23,14 @@ vi.mock("../../llm-slug-generator.js", () => ({
 }));
 
 let handler: HookHandler;
+let resolveSessionMemoryOptions: (rawHookConfig: unknown) => {
+  messageCount: number;
+  allowLlmSlug: boolean;
+  usedDeprecatedNestedHookConfig: boolean;
+};
 
 beforeAll(async () => {
-  ({ default: handler } = await import("./handler.js"));
+  ({ default: handler, resolveSessionMemoryOptions } = await import("./handler.js"));
 });
 
 /**
@@ -123,6 +128,29 @@ function makeSessionMemoryConfig(tempDir: string, messages?: number): OpenClawCo
 }
 
 describe("session-memory hook", () => {
+  it("parses llmSlug options with flat key precedence over deprecated nested key", () => {
+    const opts = resolveSessionMemoryOptions({
+      messages: 20,
+      llmSlug: false,
+      hookConfig: { llmSlug: true },
+    });
+
+    expect(opts.messageCount).toBe(20);
+    expect(opts.allowLlmSlug).toBe(false);
+    expect(opts.usedDeprecatedNestedHookConfig).toBe(true);
+  });
+
+  it("disables deprecated nested warning flag when nested llmSlug is absent", () => {
+    const opts = resolveSessionMemoryOptions({
+      messages: 10,
+      llmSlug: true,
+    });
+
+    expect(opts.messageCount).toBe(10);
+    expect(opts.allowLlmSlug).toBe(true);
+    expect(opts.usedDeprecatedNestedHookConfig).toBe(false);
+  });
+
   it("skips non-command events", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
 
