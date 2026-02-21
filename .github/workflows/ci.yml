@@ -29,7 +29,7 @@ jobs:
         uses: ./.github/actions/detect-docs-changes
 
   # Detect which heavy areas are touched so PRs can skip unrelated expensive jobs.
-  # Push to main keeps broad coverage.
+  # Push to main uses a lighter fork-oriented lane.
   changed-scope:
     needs: [docs-scope]
     if: needs.docs-scope.outputs.docs_only != 'true'
@@ -209,29 +209,33 @@ jobs:
           install-bun: "${{ matrix.runtime == 'bun' }}"
 
       - name: Configure vitest JSON reports
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: github.event_name != 'push' && matrix.task == 'test' && matrix.runtime == 'node'
         run: echo "OPENCLAW_VITEST_REPORT_DIR=$RUNNER_TEMP/vitest-reports" >> "$GITHUB_ENV"
 
       - name: Configure Node test resources
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: github.event_name != 'push' && matrix.task == 'test' && matrix.runtime == 'node'
         run: |
           # `pnpm test` runs `scripts/test-parallel.mjs`, which spawns multiple Node processes.
           # Default heap limits have been too low on Linux CI (V8 OOM near 4GB).
           echo "OPENCLAW_TEST_WORKERS=2" >> "$GITHUB_ENV"
           echo "OPENCLAW_TEST_MAX_OLD_SPACE_SIZE_MB=6144" >> "$GITHUB_ENV"
 
+      - name: Run lightweight node tests on push
+        if: github.event_name == 'push' && matrix.runtime == 'node' && matrix.task == 'test'
+        run: pnpm canvas:a2ui:bundle && pnpm test:fast
+
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
-        if: matrix.runtime != 'bun' || github.event_name != 'push'
+        if: (matrix.runtime != 'bun' || github.event_name != 'push') && !(github.event_name == 'push' && matrix.runtime == 'node' && matrix.task == 'test')
         run: ${{ matrix.command }}
 
       - name: Summarize slowest tests
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: github.event_name != 'push' && matrix.task == 'test' && matrix.runtime == 'node'
         run: |
           node scripts/vitest-slowest.mjs --dir "$OPENCLAW_VITEST_REPORT_DIR" --top 50 --out "$RUNNER_TEMP/vitest-slowest.md" > /dev/null
           echo "Slowest test summary written to $RUNNER_TEMP/vitest-slowest.md"
 
       - name: Upload vitest reports
-        if: (github.event_name != 'push' || matrix.runtime != 'bun') && matrix.task == 'test' && matrix.runtime == 'node'
+        if: github.event_name != 'push' && matrix.task == 'test' && matrix.runtime == 'node'
         uses: actions/upload-artifact@v4
         with:
           name: vitest-reports-${{ runner.os }}-${{ matrix.runtime }}
@@ -305,7 +309,7 @@ jobs:
 
   checks-windows:
     needs: [docs-scope, changed-scope, build-artifacts, check]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    if: needs.docs-scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && needs.changed-scope.outputs.run_node == 'true'
     runs-on: blacksmith-16vcpu-windows-2025
     env:
       NODE_OPTIONS: --max-old-space-size=4096
@@ -659,7 +663,7 @@ jobs:
 
   android:
     needs: [docs-scope, changed-scope, check]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_android == 'true')
+    if: needs.docs-scope.outputs.docs_only != 'true' && github.event_name == 'pull_request' && needs.changed-scope.outputs.run_android == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     strategy:
       fail-fast: false
