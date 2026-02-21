@@ -395,7 +395,7 @@ export async function runEmbeddedPiAgent(
           provider,
           model: modelId,
           runId: params.runId,
-          thinkLevel,
+          thinkLevel: params.thinkLevel ?? "off",
           reasoningLevel: params.reasoningLevel,
           bashElevated: params.bashElevated,
           extraSystemPrompt: params.extraSystemPrompt,
