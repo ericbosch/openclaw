@@ -1898,7 +1898,6 @@ describe("createTelegramBot", () => {
         }),
     );
 
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     try {
       createTelegramBot({ token: "tok", testTimings: TELEGRAM_TEST_TIMINGS });
       const handler = getOnHandler("channel_post") as (
@@ -1932,20 +1931,15 @@ describe("createTelegramBot", () => {
 
       await Promise.all([first, second]);
       expect(replySpy).not.toHaveBeenCalled();
-
-      const flushTimerCall = [...setTimeoutSpy.mock.calls]
-        .toReversed()
-        .find((call) => call[1] === TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs);
-      const flushTimer = flushTimerCall?.[0] as (() => unknown) | undefined;
-      expect(flushTimer).toBeTypeOf("function");
-      await flushTimer?.();
+      await new Promise((resolve) =>
+        setTimeout(resolve, TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs + 50),
+      );
 
       expect(replySpy).toHaveBeenCalledTimes(1);
       const payload = replySpy.mock.calls[0]?.[0] as { Body?: string; MediaPaths?: string[] };
       expect(payload.Body).toContain("album caption");
       expect(payload.MediaPaths).toHaveLength(2);
     } finally {
-      setTimeoutSpy.mockRestore();
       fetchSpy.mockRestore();
     }
   });
@@ -1967,48 +1961,43 @@ describe("createTelegramBot", () => {
       },
     });
 
-    vi.useFakeTimers();
-    try {
-      createTelegramBot({ token: "tok", testTimings: TELEGRAM_TEST_TIMINGS });
-      const handler = getOnHandler("channel_post") as (
-        ctx: Record<string, unknown>,
-      ) => Promise<void>;
+    createTelegramBot({ token: "tok", testTimings: TELEGRAM_TEST_TIMINGS });
+    const handler = getOnHandler("channel_post") as (ctx: Record<string, unknown>) => Promise<void>;
 
-      const part1 = "A".repeat(4050);
-      const part2 = "B".repeat(50);
+    const part1 = "A".repeat(4050);
+    const part2 = "B".repeat(50);
 
-      await handler({
-        channelPost: {
-          chat: { id: -100777111222, type: "channel", title: "Wake Channel" },
-          message_id: 301,
-          date: 1736380800,
-          text: part1,
-        },
-        me: { username: "openclaw_bot" },
-        getFile: async () => ({}),
-      });
+    await handler({
+      channelPost: {
+        chat: { id: -100777111222, type: "channel", title: "Wake Channel" },
+        message_id: 301,
+        date: 1736380800,
+        text: part1,
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({}),
+    });
 
-      await handler({
-        channelPost: {
-          chat: { id: -100777111222, type: "channel", title: "Wake Channel" },
-          message_id: 302,
-          date: 1736380801,
-          text: part2,
-        },
-        me: { username: "openclaw_bot" },
-        getFile: async () => ({}),
-      });
+    await handler({
+      channelPost: {
+        chat: { id: -100777111222, type: "channel", title: "Wake Channel" },
+        message_id: 302,
+        date: 1736380801,
+        text: part2,
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({}),
+    });
 
-      expect(replySpy).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(TELEGRAM_TEST_TIMINGS.textFragmentGapMs + 100);
+    expect(replySpy).not.toHaveBeenCalled();
+    await new Promise((resolve) =>
+      setTimeout(resolve, TELEGRAM_TEST_TIMINGS.textFragmentGapMs + 100),
+    );
 
-      expect(replySpy).toHaveBeenCalledTimes(1);
-      const payload = replySpy.mock.calls[0]?.[0] as { RawBody?: string };
-      expect(payload.RawBody).toContain(part1.slice(0, 32));
-      expect(payload.RawBody).toContain(part2.slice(0, 32));
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(replySpy).toHaveBeenCalledTimes(1);
+    const payload = replySpy.mock.calls[0]?.[0] as { RawBody?: string };
+    expect(payload.RawBody).toContain(part1.slice(0, 32));
+    expect(payload.RawBody).toContain(part2.slice(0, 32));
   });
   it("drops oversized channel_post media instead of dispatching a placeholder message", async () => {
     onSpy.mockReset();
