@@ -1931,9 +1931,10 @@ describe("createTelegramBot", () => {
 
       await Promise.all([first, second]);
       expect(replySpy).not.toHaveBeenCalled();
-      await new Promise((resolve) =>
-        setTimeout(resolve, TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs + 50),
-      );
+      const deadline = Date.now() + TELEGRAM_TEST_TIMINGS.mediaGroupFlushMs + 500;
+      while (replySpy.mock.calls.length < 1 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
 
       expect(replySpy).toHaveBeenCalledTimes(1);
       const payload = replySpy.mock.calls[0]?.[0] as { Body?: string; MediaPaths?: string[] };

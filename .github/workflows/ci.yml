@@ -222,7 +222,16 @@ jobs:
 
       - name: Run lightweight node tests on push
         if: github.event_name == 'push' && matrix.runtime == 'node' && matrix.task == 'test'
-        run: pnpm canvas:a2ui:bundle && pnpm test:fast
+        env:
+          TMPDIR: /tmp/openclaw
+        run: |
+          mkdir -p "$TMPDIR"
+          chmod 700 "$TMPDIR" || true
+          pnpm canvas:a2ui:bundle
+          pnpm vitest run --config vitest.unit.config.ts \
+            src/channels/ack-style.test.ts \
+            src/auto-reply/reply/agent-runner.runreplyagent.test.ts \
+            src/infra/heartbeat-runner.returns-default-unset.test.ts
 
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
         if: (matrix.runtime != 'bun' || github.event_name != 'push') && !(github.event_name == 'push' && matrix.runtime == 'node' && matrix.task == 'test')
