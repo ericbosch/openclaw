@@ -102,6 +102,46 @@ function createCompactionDiagId(): string {
   return `ovf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const NVIDIA_PREEMPTIVE_COMPACTION_MODEL = "meta/llama-3.1-8b-instruct";
+const NVIDIA_PREEMPTIVE_COMPACTION_MAX_CTX_TOKENS = 131_072;
+const NVIDIA_PREEMPTIVE_COMPACTION_CHARS_PER_TOKEN = 4;
+const NVIDIA_PREEMPTIVE_COMPACTION_HEADROOM_RATIO = 0.75;
+
+async function shouldRunNvidiaPreemptiveCompaction(params: {
+  provider: string;
+  modelId: string;
+  contextWindowTokens: number;
+  sessionFile: string;
+}): Promise<{ shouldRun: boolean; sessionBytes?: number; budgetBytes?: number }> {
+  if (
+    params.provider !== "nvidia" ||
+    params.modelId !== NVIDIA_PREEMPTIVE_COMPACTION_MODEL ||
+    params.contextWindowTokens <= 0 ||
+    params.contextWindowTokens > NVIDIA_PREEMPTIVE_COMPACTION_MAX_CTX_TOKENS
+  ) {
+    return { shouldRun: false };
+  }
+
+  try {
+    const stat = await fs.stat(params.sessionFile);
+    if (!stat.isFile()) {
+      return { shouldRun: false };
+    }
+    const budgetBytes = Math.floor(
+      params.contextWindowTokens *
+        NVIDIA_PREEMPTIVE_COMPACTION_CHARS_PER_TOKEN *
+        NVIDIA_PREEMPTIVE_COMPACTION_HEADROOM_RATIO,
+    );
+    return {
+      shouldRun: stat.size > budgetBytes,
+      sessionBytes: stat.size,
+      budgetBytes,
+    };
+  } catch {
+    return { shouldRun: false };
+  }
+}
+
 const hasUsageValues = (
   usage: ReturnType<typeof normalizeUsage>,
 ): usage is NonNullable<ReturnType<typeof normalizeUsage>> =>
@@ -169,6 +209,22 @@ function resolveActiveErrorContext(params: {
     provider: params.lastAssistant?.provider ?? params.provider,
     model: params.lastAssistant?.model ?? params.model,
   };
+}
+
+function isLikelyCompactionFailureFallback(errorText: string): boolean {
+  const lower = errorText.toLowerCase();
+  const hasCompactionMarker =
+    lower.includes("summarization failed") ||
+    lower.includes("compaction failed") ||
+    lower.includes("auto-compaction");
+  if (!hasCompactionMarker) {
+    return false;
+  }
+  return (
+    lower.includes("request_too_large") ||
+    lower.includes("context window") ||
+    lower.includes("context overflow")
+  );
 }
 
 export async function runEmbeddedPiAgent(
@@ -306,6 +362,59 @@ export async function runEmbeddedPiAgent(
           `Model context window too small (${ctxGuard.tokens} tokens). Minimum is ${CONTEXT_WINDOW_HARD_MIN_TOKENS}.`,
           { reason: "unknown", provider, model: modelId },
         );
+      }
+      let autoCompactionCount = 0;
+
+      const preflightCompaction = fallbackConfigured
+        ? await shouldRunNvidiaPreemptiveCompaction({
+            provider,
+            modelId,
+            contextWindowTokens: ctxInfo.tokens,
+            sessionFile: params.sessionFile,
+          })
+        : { shouldRun: false };
+      if (preflightCompaction.shouldRun) {
+        const overflowDiagId = createCompactionDiagId();
+        log.warn(
+          `[context-overflow-recovery] preflight compaction before fallback ${provider}/${modelId} ` +
+            `(sessionBytes=${preflightCompaction.sessionBytes} budgetBytes=${preflightCompaction.budgetBytes} contextWindow=${ctxInfo.tokens})`,
+        );
+        const compactResult = await compactEmbeddedPiSessionDirect({
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          messageChannel: params.messageChannel,
+          messageProvider: params.messageProvider,
+          agentAccountId: params.agentAccountId,
+          authProfileId: params.authProfileId,
+          sessionFile: params.sessionFile,
+          workspaceDir: resolvedWorkspace,
+          agentDir,
+          config: params.config,
+          skillsSnapshot: params.skillsSnapshot,
+          senderIsOwner: params.senderIsOwner,
+          provider,
+          model: modelId,
+          runId: params.runId,
+          thinkLevel,
+          reasoningLevel: params.reasoningLevel,
+          bashElevated: params.bashElevated,
+          extraSystemPrompt: params.extraSystemPrompt,
+          ownerNumbers: params.ownerNumbers,
+          trigger: "overflow",
+          diagId: overflowDiagId,
+          attempt: 1,
+          maxAttempts: 1,
+        });
+        if (compactResult?.compacted) {
+          autoCompactionCount += 1;
+          log.info(
+            `[context-overflow-recovery] preflight compaction succeeded for ${provider}/${modelId}; proceeding with prompt`,
+          );
+        } else {
+          log.warn(
+            `[context-overflow-recovery] preflight compaction did not compact for ${provider}/${modelId}: ${compactResult?.reason ?? "unknown"}`,
+          );
+        }
       }
 
       const authStore = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
@@ -479,7 +588,6 @@ export async function runEmbeddedPiAgent(
       let toolResultTruncationAttempted = false;
       const usageAccumulator = createUsageAccumulator();
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
-      let autoCompactionCount = 0;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
@@ -611,7 +719,8 @@ export async function runEmbeddedPiAgent(
                 `diagId=${overflowDiagId} compactionAttempts=${overflowCompactionAttempts} ` +
                 `error=${errorText.slice(0, 200)}`,
             );
-            const isCompactionFailure = isCompactionFailureError(errorText);
+            const isCompactionFailure =
+              isCompactionFailureError(errorText) || isLikelyCompactionFailureFallback(errorText);
             const hadAttemptLevelCompaction = attemptCompactionCount > 0;
             // If this attempt already compacted (SDK auto-compaction), avoid immediately
             // running another explicit compaction for the same overflow trigger.
@@ -670,13 +779,13 @@ export async function runEmbeddedPiAgent(
                 attempt: overflowCompactionAttempts,
                 maxAttempts: MAX_OVERFLOW_COMPACTION_ATTEMPTS,
               });
-              if (compactResult.compacted) {
+              if (compactResult?.compacted) {
                 autoCompactionCount += 1;
                 log.info(`auto-compaction succeeded for ${provider}/${modelId}; retrying prompt`);
                 continue;
               }
               log.warn(
-                `auto-compaction failed for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}`,
+                `auto-compaction failed for ${provider}/${modelId}: ${compactResult?.reason ?? "nothing to compact"}`,
               );
             }
             // Fallback: try truncating oversized tool results in the session.
