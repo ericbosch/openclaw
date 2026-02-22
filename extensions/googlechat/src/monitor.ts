@@ -5,6 +5,8 @@ import {
   readJsonBodyWithLimit,
   registerWebhookTarget,
   rejectNonPostWebhookRequest,
+  resolveRuntimeGroupPolicy,
+  resolveSingleWebhookTargetAsync,
   resolveWebhookPath,
   resolveWebhookTargets,
   requestBodyErrorToText,
@@ -66,6 +68,7 @@ function logVerbose(core: GoogleChatCoreRuntime, runtime: GoogleChatRuntimeEnv, 
 }
 
 const warnedDeprecatedUsersEmailAllowFrom = new Set<string>();
+const warnedMissingProviderGroupPolicy = new Set<string>();
 function warnDeprecatedUsersEmailEntries(
   core: GoogleChatCoreRuntime,
   runtime: GoogleChatRuntimeEnv,
@@ -208,8 +211,7 @@ export async function handleGoogleChatWebhookRequest(
     ? authHeaderNow.slice("bearer ".length)
     : bearer;
 
-  const matchedTargets: WebhookTarget[] = [];
-  for (const target of targets) {
+  const matchedTarget = await resolveSingleWebhookTargetAsync(targets, async (target) => {
     const audienceType = target.audienceType;
     const audience = target.audience;
     const verification = await verifyGoogleChatRequest({
@@ -217,27 +219,22 @@ export async function handleGoogleChatWebhookRequest(
       audienceType,
       audience,
     });
-    if (verification.ok) {
-      matchedTargets.push(target);
-      if (matchedTargets.length > 1) {
-        break;
-      }
-    }
-  }
+    return verification.ok;
+  });
 
-  if (matchedTargets.length === 0) {
+  if (matchedTarget.kind === "none") {
     res.statusCode = 401;
     res.end("unauthorized");
     return true;
   }
 
-  if (matchedTargets.length > 1) {
+  if (matchedTarget.kind === "ambiguous") {
     res.statusCode = 401;
     res.end("ambiguous webhook target");
     return true;
   }
 
-  const selected = matchedTargets[0];
+  const selected = matchedTarget.target;
   selected.statusSink?.({ lastInboundAt: Date.now() });
   processGoogleChatEvent(event, selected).catch((err) => {
     selected?.runtime.error?.(
@@ -432,7 +429,21 @@ async function processMessageWithPipeline(params: {
   }
 
   const defaultGroupPolicy = config.channels?.defaults?.groupPolicy;
-  const groupPolicy = account.config.groupPolicy ?? defaultGroupPolicy ?? "allowlist";
+  const { groupPolicy, providerMissingFallbackApplied } = resolveRuntimeGroupPolicy({
+    providerConfigPresent: config.channels?.googlechat !== undefined,
+    groupPolicy: account.config.groupPolicy,
+    defaultGroupPolicy,
+    configuredFallbackPolicy: "allowlist",
+    missingProviderFallbackPolicy: "allowlist",
+  });
+  if (providerMissingFallbackApplied && !warnedMissingProviderGroupPolicy.has(account.accountId)) {
+    warnedMissingProviderGroupPolicy.add(account.accountId);
+    logVerbose(
+      core,
+      runtime,
+      'googlechat: channels.googlechat is missing; defaulting groupPolicy to "allowlist" (space messages blocked until explicitly configured).',
+    );
+  }
   const groupConfigResolved = resolveGroupConfig({
     groupId: spaceId,
     groupName: space.displayName ?? null,
@@ -490,7 +501,7 @@ async function processMessageWithPipeline(params: {
   const configAllowFrom = (account.config.dm?.allowFrom ?? []).map((v) => String(v));
   const shouldComputeAuth = core.channel.commands.shouldComputeCommandAuthorized(rawBody, config);
   const storeAllowFrom =
-    !isGroup && (dmPolicy !== "open" || shouldComputeAuth)
+    !isGroup && dmPolicy !== "allowlist" && (dmPolicy !== "open" || shouldComputeAuth)
       ? await core.channel.pairing.readAllowFromStore("googlechat").catch(() => [])
       : [];
   const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
